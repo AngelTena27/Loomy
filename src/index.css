@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background-color: #07070f;
+    color: #f0f0ff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #1e1e38; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a2a4a; }
+  ::selection { background: rgba(45, 212, 191, 0.2); color: #f0f0ff; }
+}
+
+@layer utilities {
+  .bg-grid-teal {
+    background-image: linear-gradient(rgba(45,212,191,0.03) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(45,212,191,0.03) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+
+  .glow-teal {
+    box-shadow: 0 0 20px rgba(45, 212, 191, 0.25);
+  }
+
+  .glow-teal-lg {
+    box-shadow: 0 0 40px rgba(45, 212, 191, 0.3);
+  }
+
+  .text-gradient-teal {
+    background: linear-gradient(135deg, #2dd4bf, #5eead4);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}
+
+/* React Flow */
+.react-flow__attribution { display: none !important; }
+.react-flow__controls { box-shadow: none !important; }
+.react-flow__controls button {
+  background: #0e0e1c !important;
+  border: 1px solid #1e1e38 !important;
+  color: #6b7a99 !important;
+  fill: #6b7a99 !important;
+}
+.react-flow__controls button:hover {
+  background: #151528 !important;
+  fill: #2dd4bf !important;
+}
+.react-flow__minimap {
+  border: 1px solid #1e1e38 !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+.react-flow__handle {
+  background: #2dd4bf !important;
+  border: 2px solid #07070f !important;
+  width: 10px !important;
+  height: 10px !important;
+}
