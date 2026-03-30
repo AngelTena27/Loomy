@@ -1,3 +1,15 @@
+export interface WhatsAppMessage {
+  id: string
+  workspace_id: string
+  instance_id: string
+  contact_id: string | null
+  direction: 'inbound' | 'outbound'
+  content: string
+  wa_message_id: string | null
+  status: string
+  created_at: string
+}
+
 export interface Workspace {
   id: string
   name: string

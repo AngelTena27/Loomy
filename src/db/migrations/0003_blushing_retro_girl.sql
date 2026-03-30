@@ -1,0 +1,1 @@
+ALTER TABLE "whatsapp_instances" ADD COLUMN "qr_code" text;

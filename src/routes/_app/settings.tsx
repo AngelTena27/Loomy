@@ -1,12 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
-import { Settings, Shield, Bell, Palette, Plug, Globe, Plus, Trash2, ChevronDown, ChevronRight, Loader2, FolderOpen, X, Tag } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Settings, Shield, Bell, Palette, Plug, Globe, Plus, Trash2, ChevronDown, ChevronRight, Loader2, FolderOpen, X, Tag, Smartphone, CheckCircle2, WifiOff } from 'lucide-react'
 import { useLanguage } from '../../lib/i18n'
 import type { Lang } from '../../lib/i18n'
 import type { ContactFieldGroup, ContactField, WorkspaceTag } from '../../lib/types'
 import { createClient } from '../../lib/supabase'
 import { listFieldGroupsFn, createFieldGroupFn, deleteFieldGroupFn, createFieldFn, deleteFieldFn } from '../../server/contacts'
 import { listWorkspaceTagsFn, createWorkspaceTagFn, deleteWorkspaceTagFn } from '../../server/tags'
+import { connectWhatsAppFn, getWhatsAppStatusFn, disconnectWhatsAppFn, registerWhatsAppWebhookFn } from '../../server/whatsapp'
 
 export const Route = createFileRoute('/_app/settings')({
   component: SettingsPage,
@@ -137,6 +138,135 @@ function GroupCard({
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function WhatsAppSection({ workspaceId }: { workspaceId: string }) {
+  const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null)
+  const [qrBase64, setQrBase64] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (!workspaceId) return
+    getWhatsAppStatusFn({ data: { workspaceId } }).then(instance => {
+      if (instance) {
+        setStatus(instance.status as typeof status)
+        setPhoneNumber(instance.phone_number)
+        if (instance.status === 'connected') {
+          registerWhatsAppWebhookFn({ data: { workspaceId } }).catch(() => null)
+        }
+      }
+    })
+  }, [workspaceId])
+
+  function startPolling() {
+    if (pollRef.current) return
+    pollRef.current = setInterval(async () => {
+      const instance = await getWhatsAppStatusFn({ data: { workspaceId } })
+      if (!instance) return
+      setStatus(instance.status as typeof status)
+      setPhoneNumber(instance.phone_number)
+      if (instance.qr_code) setQrBase64(instance.qr_code)
+      if (instance.status === 'connected') {
+        setQrBase64(null)
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+        registerWhatsAppWebhookFn({ data: { workspaceId } }).catch(() => null)
+      }
+    }, 3000)
+  }
+
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+  }
+
+  useEffect(() => () => stopPolling(), [])
+
+  async function handleConnect() {
+    setLoading(true)
+    setStatus('connecting')
+    setQrBase64(null)
+    try {
+      const result = await connectWhatsAppFn({ data: { workspaceId } })
+      if (result.qr) setQrBase64(result.qr)
+      startPolling()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleDisconnect() {
+    stopPolling()
+    setLoading(true)
+    await disconnectWhatsAppFn({ data: { workspaceId } })
+    setStatus('disconnected')
+    setPhoneNumber(null)
+    setQrBase64(null)
+    setLoading(false)
+  }
+
+  return (
+    <div className="rounded-2xl border border-[#1e1e38] bg-[#0e0e1c] overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-[#1e1e38]">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+            <Smartphone size={16} className="text-green-400" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-[#d0d0f0]">WhatsApp</h3>
+            <p className="text-xs text-[#3d4466]">Evolution API</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {status === 'connected' && (
+            <span className="flex items-center gap-1.5 text-xs text-green-400">
+              <CheckCircle2 size={13} /> {phoneNumber ?? 'Conectado'}
+            </span>
+          )}
+          {status === 'disconnected' && (
+            <span className="flex items-center gap-1.5 text-xs text-[#3d4466]">
+              <WifiOff size={13} /> Desconectado
+            </span>
+          )}
+          {status === 'connecting' && (
+            <span className="flex items-center gap-1.5 text-xs text-amber-400">
+              <Loader2 size={13} className="animate-spin" /> Esperando escaneo...
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="p-5">
+        {status === 'connected' ? (
+          <button onClick={handleDisconnect} disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-500/20 text-red-400 text-sm hover:bg-red-500/5 transition-colors cursor-pointer disabled:opacity-50">
+            {loading ? <Loader2 size={13} className="animate-spin" /> : <WifiOff size={13} />}
+            Desconectar
+          </button>
+        ) : status === 'connecting' && qrBase64 ? (
+          <div className="flex flex-col items-center gap-4">
+            <div className="p-3 bg-white rounded-2xl">
+              <img src={qrBase64} alt="QR WhatsApp" className="w-48 h-48" />
+            </div>
+            <p className="text-xs text-[#6b7a99] text-center">
+              Abre WhatsApp → Dispositivos vinculados → Vincular dispositivo
+            </p>
+            <button onClick={handleDisconnect} disabled={loading}
+              className="text-xs text-[#3d4466] hover:text-[#6b7a99] cursor-pointer transition-colors">
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <button onClick={handleConnect} disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-[#07070f] cursor-pointer disabled:opacity-50 transition-all"
+            style={{ background: 'linear-gradient(135deg, #4ade80, #22c55e)' }}>
+            {loading ? <Loader2 size={13} className="animate-spin" /> : <Smartphone size={13} />}
+            Conectar WhatsApp
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -360,6 +490,17 @@ function SettingsPage() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* WhatsApp */}
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+              <span className="text-xs font-medium text-green-400 uppercase tracking-widest">Integraciones</span>
+            </div>
+            <h2 className="text-lg font-bold text-[#f0f0ff] tracking-tight mb-0.5">WhatsApp</h2>
+            <p className="text-sm text-[#6b7a99] mb-5">Conecta tu número para enviar y recibir mensajes desde el CRM.</p>
+            {workspaceId && <WhatsAppSection workspaceId={workspaceId} />}
           </div>
 
           {/* Etiquetas */}

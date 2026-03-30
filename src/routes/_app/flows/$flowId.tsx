@@ -12,6 +12,7 @@ import '@xyflow/react/dist/style.css'
 import { getFlowFn, saveFlowFn, createFlowRunFn, listFlowRunsByFlowFn, listFlowsFn } from '../../../server/flows'
 import { listContactsFn, updateContactFn } from '../../../server/contacts'
 import { listWorkspaceTagsFn } from '../../../server/tags'
+import { sendWhatsAppMessageFn } from '../../../server/whatsapp'
 import { createClient } from '../../../lib/supabase'
 import type { Contact, Workspace, WorkspaceTag } from '../../../lib/types'
 import {
@@ -19,6 +20,7 @@ import {
   Play, Pause, Bell, Tag, User, X, CheckCircle2, AlertCircle,
   Loader2, FlaskConical, ChevronRight, Settings2, Trash2,
   UserCog, TrendingUp, AlarmClock, Plus, Check, Search, History, Wand2, Workflow,
+  MessageCircle, Webhook, Copy,
 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import { useLanguage } from '../../../lib/i18n'
@@ -81,8 +83,10 @@ const STATUS_ICONS = {
 const ICON_MAP: Record<string, React.ElementType> = {
   contact_created: User, contact_updated: UserCog,
   deal_changed: TrendingUp, manual: Zap, form_submitted: Bell,
+  webhook: Webhook,
   send_email: Mail, add_tag: Tag, remove_tag: Tag,
   create_deal: Database, update_contact: UserCog,
+  send_whatsapp: MessageCircle,
   condition: GitBranch, wait: AlarmClock,
   call_subflow: Workflow,
   subflow_start: Play,
@@ -342,6 +346,14 @@ const TRIGGER_OUTPUTS: Record<string, Array<{ key: string; label: string }>> = {
     { key: 'phone', label: 'Teléfono' },
     { key: 'company', label: 'Empresa' },
   ],
+  webhook: [
+    { key: 'contact_id', label: 'ID Contacto' },
+    { key: 'first_name', label: 'Nombre' },
+    { key: 'last_name', label: 'Apellido' },
+    { key: 'email', label: 'Email' },
+    { key: 'phone', label: 'Teléfono' },
+    { key: 'payload', label: 'Payload' },
+  ],
 }
 
 // ─────────────────────────────────────────────────────────
@@ -387,6 +399,7 @@ function FlowEditor() {
         { type: 'trigger', subType: 'deal_changed',     label: t('node_deal_changed'),     description: t('node_deal_changed_desc'),     icon: TrendingUp },
         { type: 'trigger', subType: 'form_submitted',   label: t('node_form_submitted'),   description: t('node_form_submitted_desc'),   icon: Bell },
         { type: 'trigger', subType: 'manual',           label: t('node_manual'),           description: t('node_manual_desc'),           icon: Zap },
+        { type: 'trigger', subType: 'webhook',          label: 'Webhook',                  description: 'Se activa al recibir una petición HTTP externa',         icon: Webhook },
         { type: 'trigger', subType: 'subflow_start',    label: 'Inicio de subflujo',       description: 'Punto de entrada cuando este flujo es llamado por otro', icon: Play },
       ],
     },
@@ -399,6 +412,7 @@ function FlowEditor() {
         { type: 'action', subType: 'remove_tag',     label: t('node_remove_tag'),     description: t('node_remove_tag_desc'),     icon: Tag },
         { type: 'action', subType: 'create_deal',    label: t('node_create_deal'),    description: t('node_create_deal_desc'),    icon: Database },
         { type: 'action', subType: 'update_contact', label: t('node_update_contact'), description: t('node_update_contact_desc'), icon: UserCog },
+        { type: 'action', subType: 'send_whatsapp',  label: 'Enviar WhatsApp',        description: 'Envía un mensaje de WhatsApp al contacto',          icon: MessageCircle },
         { type: 'action', subType: 'call_subflow',   label: 'Llamar subflujo',        description: 'Ejecuta otro flujo como subproceso',                icon: Workflow },
       ],
     },
@@ -440,7 +454,11 @@ function FlowEditor() {
       { key: 'unit',   label: t('cfg_unit'),   placeholder: 'hours', options: ['minutes', 'hours', 'days'] },
     ],
     deal_changed:   [{ key: 'stage', label: t('cfg_target_stage'), placeholder: 'Won' }],
+    send_whatsapp:  [
+      { key: 'message', label: 'Mensaje', placeholder: 'Hola {{first_name}}, ...', type: 'textarea' },
+    ],
     call_subflow:   [],   // selector custom, no usa CONFIG_FIELDS estándar
+    webhook:        [],   // URL se muestra en panel especial
   }
 
   // Resuelve variables {{key}} con datos reales del contacto
@@ -491,7 +509,8 @@ function FlowEditor() {
       case 'contact_updated':
       case 'manual':
       case 'form_submitted':
-      case 'subflow_start': {
+      case 'subflow_start':
+      case 'webhook': {
         const log = [
           `Contacto: ${contact.first_name} ${contact.last_name ?? ''}`,
           `ID: ${contact.id}`,
@@ -546,6 +565,16 @@ function FlowEditor() {
         return {
           log: `Para: ${contact.email || '—'}\nAsunto: ${subject}${preview ? `\nCuerpo: ${preview}` : ''}`,
         }
+      }
+
+      case 'send_whatsapp': {
+        if (!c.message) return { log: '⚠️ Mensaje no configurado' }
+        if (!contact.phone) return { log: '⚠️ El contacto no tiene número de teléfono' }
+        const text = resolveVars(c.message, contact)
+        if (!workspace) return { log: '⚠️ Sin workspace' }
+        await sendWhatsAppMessageFn({ data: { workspaceId: workspace.id, contactId: contact.id, message: text } })
+        const preview = text.length > 80 ? text.slice(0, 80) + '…' : text
+        return { log: `WhatsApp enviado a ${contact.phone}\nMensaje: ${preview}` }
       }
 
       case 'condition': {
@@ -1236,7 +1265,29 @@ function FlowEditor() {
               </div>
             )}
 
-            {(CONFIG_FIELDS[selectedNode.data.subType] ?? []).length === 0 && selectedNode.data.subType !== 'call_subflow' && (
+            {/* Webhook URL panel */}
+            {selectedNode.data.subType === 'webhook' && (
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] font-semibold text-[#6b7a99] uppercase tracking-wider">URL del Webhook</label>
+                <div className="rounded-lg border border-[#1e1e2e] bg-[#0a0a12] px-3 py-2 flex items-center gap-2">
+                  <code className="flex-1 text-[10px] text-teal-300 font-mono break-all leading-relaxed select-all">
+                    {`${globalThis.location?.origin ?? ''}/api/webhooks/flow/${flowId}`}
+                  </code>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(`${globalThis.location?.origin ?? ''}/api/webhooks/flow/${flowId}`)}
+                    className="shrink-0 text-[#3d4466] hover:text-teal-400 transition-colors cursor-pointer"
+                    title="Copiar URL"
+                  >
+                    <Copy size={12} />
+                  </button>
+                </div>
+                <p className="text-[10px] text-[#3d4466] leading-relaxed">
+                  Realiza un <span className="text-[#6b7a99]">POST</span> a esta URL con JSON. Incluye <code className="text-teal-400/70">contact_id</code> para asociar un contacto existente.
+                </p>
+              </div>
+            )}
+
+            {(CONFIG_FIELDS[selectedNode.data.subType] ?? []).length === 0 && selectedNode.data.subType !== 'call_subflow' && selectedNode.data.subType !== 'webhook' && (
               <p className="text-xs text-[#3d4466] italic">This node has no configuration options.</p>
             )}
 

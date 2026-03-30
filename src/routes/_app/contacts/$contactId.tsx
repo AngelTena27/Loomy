@@ -8,13 +8,14 @@ import {
 } from '../../../server/contacts'
 import { listFlowRunsForContactFn } from '../../../server/flows'
 import { listWorkspaceTagsFn } from '../../../server/tags'
-import type { Contact, ContactNote, ContactFieldGroup, ContactFieldValue, FlowRun, WorkspaceTag } from '../../../lib/types'
+import { listWhatsAppMessagesFn, sendWhatsAppMessageFn } from '../../../server/whatsapp'
+import type { Contact, ContactNote, ContactFieldGroup, ContactFieldValue, FlowRun, WorkspaceTag, WhatsAppMessage } from '../../../lib/types'
 import { useLanguage } from '../../../lib/i18n'
 import {
   ArrowLeft, Mail, Phone, Building, Tag, FileText, Calendar, User,
   MessageSquare, PhoneCall, AtSign, Users as MeetingIcon,
   Send, Trash2, Edit2, Check, X, Loader2, ChevronDown, ChevronRight as ChevronRightIcon,
-  Workflow, ExternalLink, Plus,
+  Workflow, ExternalLink, Plus, MessageCircle,
 } from 'lucide-react'
 
 export const Route = createFileRoute('/_app/contacts/$contactId')({
@@ -363,6 +364,11 @@ function ContactDetailPage() {
   const [content, setContent] = useState('')
   const [sending, setSending] = useState(false)
   const feedRef = useRef<HTMLDivElement>(null)
+  const [activeTab, setActiveTab] = useState<'activity' | 'whatsapp'>('activity')
+  const [waMessages, setWaMessages] = useState<WhatsAppMessage[]>([])
+  const [waContent, setWaContent] = useState('')
+  const [waSending, setWaSending] = useState(false)
+  const waFeedRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     async function load() {
@@ -376,19 +382,21 @@ function ContactDetailPage() {
       const wsId = member?.workspace_id ?? ''
       if (wsId) setWorkspaceId(wsId)
 
-      const [contactData, notesData, groupsData, valuesData, runsData, tagsData] = await Promise.all([
+      const [contactData, notesData, groupsData, valuesData, runsData, tagsData, waData] = await Promise.all([
         getContactFn({ data: { id: contactId } }),
         listContactNotesFn({ data: { contactId } }),
         wsId ? listFieldGroupsFn({ data: { workspaceId: wsId } }) : Promise.resolve([]),
         listFieldValuesFn({ data: { contactId } }),
         listFlowRunsForContactFn({ data: { contactId } }),
         wsId ? listWorkspaceTagsFn({ data: { workspaceId: wsId } }) : Promise.resolve([]),
+        listWhatsAppMessagesFn({ data: { contactId } }),
       ])
       setContact(contactData as Contact)
       setNotes(notesData as ContactNote[])
       setFieldGroups(groupsData as ContactFieldGroup[])
       setFlowRuns(runsData as FlowRun[])
       setWorkspaceTags(tagsData as WorkspaceTag[])
+      setWaMessages(waData as WhatsAppMessage[])
       const valMap: Record<string, string> = {}
       for (const v of valuesData as ContactFieldValue[]) {
         valMap[v.field_id] = v.value ?? ''
@@ -417,6 +425,32 @@ function ContactDetailPage() {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight
   }, [notes])
 
+  useEffect(() => {
+    if (waFeedRef.current) waFeedRef.current.scrollTop = waFeedRef.current.scrollHeight
+  }, [waMessages])
+
+  // Realtime + polling for WhatsApp messages
+  useEffect(() => {
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`wa-messages-${contactId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages', filter: `contact_id=eq.${contactId}` }, (payload) => {
+        setWaMessages(prev => prev.find(m => m.id === payload.new.id) ? prev : [...prev, payload.new as WhatsAppMessage])
+      })
+      .subscribe()
+
+    // Polling fallback every 5s (webhook may not always fire in dev)
+    const interval = setInterval(async () => {
+      const fresh = await listWhatsAppMessagesFn({ data: { contactId } })
+      setWaMessages(fresh as WhatsAppMessage[])
+    }, 5000)
+
+    return () => {
+      supabase.removeChannel(channel)
+      clearInterval(interval)
+    }
+  }, [contactId])
+
   async function handleSend() {
     if (!content.trim() || !currentUser || !workspaceId) return
     setSending(true)
@@ -424,6 +458,21 @@ function ContactDetailPage() {
     setContent('')
     await createContactNoteFn({ data: { contact_id: contactId, workspace_id: workspaceId, user_id: currentUser.id, user_email: currentUser.email, content: trimmed, type: noteType } })
     setSending(false)
+  }
+
+  async function handleSendWa() {
+    if (!waContent.trim() || !workspaceId) return
+    setWaSending(true)
+    const trimmed = waContent.trim()
+    setWaContent('')
+    try {
+      const msg = await sendWhatsAppMessageFn({ data: { workspaceId, contactId, message: trimmed } })
+      setWaMessages(prev => [...prev, msg as WhatsAppMessage])
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error al enviar'
+      alert(message)
+    }
+    setWaSending(false)
   }
 
   async function handleDeleteNote(id: string) {
@@ -585,62 +634,145 @@ function ContactDetailPage() {
           </div>
         </div>
 
-        {/* Right — actividad */}
+        {/* Right — actividad / WhatsApp */}
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="px-5 py-3.5 border-b border-[#1e1e38] shrink-0">
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
-              <span className="text-xs font-semibold text-[#6b7a99] uppercase tracking-widest">{t('activity_feed')}</span>
-              <span className="ml-auto text-[10px] text-[#3d4466]">{notes.length} {notes.length === 1 ? t('entry_one') : t('entry_many')}</span>
-            </div>
+          {/* Tab bar */}
+          <div className="px-5 border-b border-[#1e1e38] shrink-0 flex items-center gap-1 pt-1">
+            <button
+              onClick={() => setActiveTab('activity')}
+              className={['flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer',
+                activeTab === 'activity'
+                  ? 'border-teal-400 text-teal-400'
+                  : 'border-transparent text-[#3d4466] hover:text-[#6b7a99]',
+              ].join(' ')}
+            >
+              <MessageSquare size={12} />
+              {t('activity_feed')}
+              <span className="ml-1 text-[10px] opacity-60">{notes.length}</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('whatsapp')}
+              className={['flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer',
+                activeTab === 'whatsapp'
+                  ? 'border-green-400 text-green-400'
+                  : 'border-transparent text-[#3d4466] hover:text-[#6b7a99]',
+              ].join(' ')}
+            >
+              <MessageCircle size={12} />
+              WhatsApp
+              {waMessages.length > 0 && <span className="ml-1 text-[10px] opacity-60">{waMessages.length}</span>}
+            </button>
           </div>
 
-          <div ref={feedRef} className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
-            {notes.length === 0 ? (
-              <div className="flex flex-col items-center justify-center flex-1 gap-2 text-center py-16">
-                <div className="w-12 h-12 rounded-2xl bg-[#0e0e1c] border border-[#1e1e38] flex items-center justify-center mb-1">
-                  <MessageSquare size={20} className="text-[#2a2a4a]" />
-                </div>
-                <p className="text-sm font-medium text-[#6b7a99]">{t('no_activity')}</p>
-                <p className="text-xs text-[#3d4466] max-w-xs">{t('no_activity_sub')}</p>
+          {/* Activity tab */}
+          {activeTab === 'activity' && (
+            <>
+              <div ref={feedRef} className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
+                {notes.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center flex-1 gap-2 text-center py-16">
+                    <div className="w-12 h-12 rounded-2xl bg-[#0e0e1c] border border-[#1e1e38] flex items-center justify-center mb-1">
+                      <MessageSquare size={20} className="text-[#2a2a4a]" />
+                    </div>
+                    <p className="text-sm font-medium text-[#6b7a99]">{t('no_activity')}</p>
+                    <p className="text-xs text-[#3d4466] max-w-xs">{t('no_activity_sub')}</p>
+                  </div>
+                ) : (
+                  notes.map(note => (
+                    <NoteItem key={note.id} note={note} currentUserId={currentUser?.id ?? ''} onDelete={handleDeleteNote} />
+                  ))
+                )}
               </div>
-            ) : (
-              notes.map(note => (
-                <NoteItem key={note.id} note={note} currentUserId={currentUser?.id ?? ''} onDelete={handleDeleteNote} />
-              ))
-            )}
-          </div>
-
-          <div className="px-5 py-4 border-t border-[#1e1e38] shrink-0 space-y-3">
-            <div className="flex gap-2">
-              {NOTE_TYPES.map(nt => {
-                const Icon = nt.icon
-                const active = noteType === nt.value
-                const labels: Record<string, string> = { note: t('note_type_note'), call: t('note_type_call'), email: t('note_type_email'), meeting: t('note_type_meeting') }
-                return (
-                  <button key={nt.value} onClick={() => setNoteType(nt.value)}
-                    className={['flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer border',
-                      active ? `${nt.bg} ${nt.border} ${nt.color}` : 'bg-[#0a0a17] border-[#1e1e38] text-[#3d4466] hover:border-[#2a2a4a] hover:text-[#6b7a99]'
-                    ].join(' ')}>
-                    <Icon size={12} />{labels[nt.value]}
+              <div className="px-5 py-4 border-t border-[#1e1e38] shrink-0 space-y-3">
+                <div className="flex gap-2">
+                  {NOTE_TYPES.map(nt => {
+                    const Icon = nt.icon
+                    const active = noteType === nt.value
+                    const labels: Record<string, string> = { note: t('note_type_note'), call: t('note_type_call'), email: t('note_type_email'), meeting: t('note_type_meeting') }
+                    return (
+                      <button key={nt.value} onClick={() => setNoteType(nt.value)}
+                        className={['flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer border',
+                          active ? `${nt.bg} ${nt.border} ${nt.color}` : 'bg-[#0a0a17] border-[#1e1e38] text-[#3d4466] hover:border-[#2a2a4a] hover:text-[#6b7a99]'
+                        ].join(' ')}>
+                        <Icon size={12} />{labels[nt.value]}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="flex gap-2 items-end">
+                  <textarea rows={2} value={content} onChange={e => setContent(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSend() }}
+                    placeholder={t('note_placeholder')}
+                    className="flex-1 bg-[#0a0a17] border border-[#1e1e38] rounded-xl px-3.5 py-2.5 text-sm text-[#f0f0ff] placeholder-[#3d4466] focus:outline-none focus:border-teal-500/40 focus:ring-2 focus:ring-teal-500/10 resize-none transition-all hover:border-[#2a2a4a]"
+                  />
+                  <button onClick={handleSend} disabled={!content.trim() || sending}
+                    className="h-10 w-10 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                    style={{ background: 'linear-gradient(135deg, #2dd4bf, #14b8a6)' }}>
+                    {sending ? <Loader2 size={15} className="text-[#07070f] animate-spin" /> : <Send size={15} className="text-[#07070f]" />}
                   </button>
-                )
-              })}
-            </div>
-            <div className="flex gap-2 items-end">
-              <textarea rows={2} value={content} onChange={e => setContent(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSend() }}
-                placeholder={t('note_placeholder')}
-                className="flex-1 bg-[#0a0a17] border border-[#1e1e38] rounded-xl px-3.5 py-2.5 text-sm text-[#f0f0ff] placeholder-[#3d4466] focus:outline-none focus:border-teal-500/40 focus:ring-2 focus:ring-teal-500/10 resize-none transition-all hover:border-[#2a2a4a]"
-              />
-              <button onClick={handleSend} disabled={!content.trim() || sending}
-                className="h-10 w-10 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
-                style={{ background: 'linear-gradient(135deg, #2dd4bf, #14b8a6)' }}>
-                {sending ? <Loader2 size={15} className="text-[#07070f] animate-spin" /> : <Send size={15} className="text-[#07070f]" />}
-              </button>
-            </div>
-            <p className="text-[10px] text-[#2a2a4a]">{t('note_hint')}</p>
-          </div>
+                </div>
+                <p className="text-[10px] text-[#2a2a4a]">{t('note_hint')}</p>
+              </div>
+            </>
+          )}
+
+          {/* WhatsApp tab */}
+          {activeTab === 'whatsapp' && (
+            <>
+              <div ref={waFeedRef} className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
+                {waMessages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center flex-1 gap-2 text-center py-16">
+                    <div className="w-12 h-12 rounded-2xl bg-[#0e0e1c] border border-[#1e1e38] flex items-center justify-center mb-1">
+                      <MessageCircle size={20} className="text-[#2a2a4a]" />
+                    </div>
+                    <p className="text-sm font-medium text-[#6b7a99]">Sin mensajes de WhatsApp</p>
+                    <p className="text-xs text-[#3d4466] max-w-xs">Los mensajes enviados y recibidos por WhatsApp aparecerán aquí.</p>
+                  </div>
+                ) : (
+                  waMessages.map(msg => {
+                    const isOutbound = msg.direction === 'outbound'
+                    const date = new Date(msg.created_at)
+                    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    const dateStr = date.toLocaleDateString([], { day: '2-digit', month: 'short' })
+                    const isToday = new Date().toDateString() === date.toDateString()
+                    return (
+                      <div key={msg.id} className={`flex gap-3 ${isOutbound ? 'flex-row-reverse' : 'flex-row'}`}>
+                        <div className="w-7 h-7 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                          <MessageCircle size={13} className="text-green-400" />
+                        </div>
+                        <div className={`max-w-[75%] flex flex-col gap-1 ${isOutbound ? 'items-end' : 'items-start'}`}>
+                          <div className={`px-3.5 py-2.5 rounded-2xl text-sm text-[#d0d0f0] leading-relaxed whitespace-pre-wrap break-words
+                            ${isOutbound
+                              ? 'bg-green-500/15 border border-green-500/20 rounded-tr-sm'
+                              : 'bg-[#151528] border border-[#1e1e38] rounded-tl-sm'
+                            }`}>
+                            {msg.content}
+                          </div>
+                          <span className="text-[10px] text-[#3d4466] px-1">
+                            {isToday ? timeStr : `${dateStr} · ${timeStr}`}
+                            {' · '}{isOutbound ? 'Enviado' : 'Recibido'}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+              <div className="px-5 py-4 border-t border-[#1e1e38] shrink-0 space-y-2">
+                <div className="flex gap-2 items-end">
+                  <textarea rows={2} value={waContent} onChange={e => setWaContent(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSendWa() }}
+                    placeholder="Escribe un mensaje de WhatsApp... (⌘↵ para enviar)"
+                    className="flex-1 bg-[#0a0a17] border border-[#1e1e38] rounded-xl px-3.5 py-2.5 text-sm text-[#f0f0ff] placeholder-[#3d4466] focus:outline-none focus:border-green-500/40 focus:ring-2 focus:ring-green-500/10 resize-none transition-all hover:border-[#2a2a4a]"
+                  />
+                  <button onClick={handleSendWa} disabled={!waContent.trim() || waSending}
+                    className="h-10 w-10 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                    style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)' }}>
+                    {waSending ? <Loader2 size={15} className="text-white animate-spin" /> : <Send size={15} className="text-white" />}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

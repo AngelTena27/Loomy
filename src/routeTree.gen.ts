@@ -17,9 +17,11 @@ import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppPipelineIndexRouteImport } from './routes/_app/pipeline/index'
 import { Route as AppFlowsIndexRouteImport } from './routes/_app/flows/index'
 import { Route as AppContactsIndexRouteImport } from './routes/_app/contacts/index'
+import { Route as ApiWebhooksWhatsappRouteImport } from './routes/api/webhooks/whatsapp'
 import { Route as AppPipelinePipelineIdRouteImport } from './routes/_app/pipeline/$pipelineId'
 import { Route as AppFlowsFlowIdRouteImport } from './routes/_app/flows/$flowId'
 import { Route as AppContactsContactIdRouteImport } from './routes/_app/contacts/$contactId'
+import { Route as ApiWebhooksFlowFlowIdRouteImport } from './routes/api/webhooks/flow.$flowId'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -60,6 +62,11 @@ const AppContactsIndexRoute = AppContactsIndexRouteImport.update({
   path: '/contacts/',
   getParentRoute: () => AppRoute,
 } as any)
+const ApiWebhooksWhatsappRoute = ApiWebhooksWhatsappRouteImport.update({
+  id: '/api/webhooks/whatsapp',
+  path: '/api/webhooks/whatsapp',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppPipelinePipelineIdRoute = AppPipelinePipelineIdRouteImport.update({
   id: '/pipeline/$pipelineId',
   path: '/pipeline/$pipelineId',
@@ -75,6 +82,11 @@ const AppContactsContactIdRoute = AppContactsContactIdRouteImport.update({
   path: '/contacts/$contactId',
   getParentRoute: () => AppRoute,
 } as any)
+const ApiWebhooksFlowFlowIdRoute = ApiWebhooksFlowFlowIdRouteImport.update({
+  id: '/api/webhooks/flow/$flowId',
+  path: '/api/webhooks/flow/$flowId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -84,9 +96,11 @@ export interface FileRoutesByFullPath {
   '/contacts/$contactId': typeof AppContactsContactIdRoute
   '/flows/$flowId': typeof AppFlowsFlowIdRoute
   '/pipeline/$pipelineId': typeof AppPipelinePipelineIdRoute
+  '/api/webhooks/whatsapp': typeof ApiWebhooksWhatsappRoute
   '/contacts/': typeof AppContactsIndexRoute
   '/flows/': typeof AppFlowsIndexRoute
   '/pipeline/': typeof AppPipelineIndexRoute
+  '/api/webhooks/flow/$flowId': typeof ApiWebhooksFlowFlowIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -96,9 +110,11 @@ export interface FileRoutesByTo {
   '/contacts/$contactId': typeof AppContactsContactIdRoute
   '/flows/$flowId': typeof AppFlowsFlowIdRoute
   '/pipeline/$pipelineId': typeof AppPipelinePipelineIdRoute
+  '/api/webhooks/whatsapp': typeof ApiWebhooksWhatsappRoute
   '/contacts': typeof AppContactsIndexRoute
   '/flows': typeof AppFlowsIndexRoute
   '/pipeline': typeof AppPipelineIndexRoute
+  '/api/webhooks/flow/$flowId': typeof ApiWebhooksFlowFlowIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -110,9 +126,11 @@ export interface FileRoutesById {
   '/_app/contacts/$contactId': typeof AppContactsContactIdRoute
   '/_app/flows/$flowId': typeof AppFlowsFlowIdRoute
   '/_app/pipeline/$pipelineId': typeof AppPipelinePipelineIdRoute
+  '/api/webhooks/whatsapp': typeof ApiWebhooksWhatsappRoute
   '/_app/contacts/': typeof AppContactsIndexRoute
   '/_app/flows/': typeof AppFlowsIndexRoute
   '/_app/pipeline/': typeof AppPipelineIndexRoute
+  '/api/webhooks/flow/$flowId': typeof ApiWebhooksFlowFlowIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -124,9 +142,11 @@ export interface FileRouteTypes {
     | '/contacts/$contactId'
     | '/flows/$flowId'
     | '/pipeline/$pipelineId'
+    | '/api/webhooks/whatsapp'
     | '/contacts/'
     | '/flows/'
     | '/pipeline/'
+    | '/api/webhooks/flow/$flowId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -136,9 +156,11 @@ export interface FileRouteTypes {
     | '/contacts/$contactId'
     | '/flows/$flowId'
     | '/pipeline/$pipelineId'
+    | '/api/webhooks/whatsapp'
     | '/contacts'
     | '/flows'
     | '/pipeline'
+    | '/api/webhooks/flow/$flowId'
   id:
     | '__root__'
     | '/'
@@ -149,15 +171,19 @@ export interface FileRouteTypes {
     | '/_app/contacts/$contactId'
     | '/_app/flows/$flowId'
     | '/_app/pipeline/$pipelineId'
+    | '/api/webhooks/whatsapp'
     | '/_app/contacts/'
     | '/_app/flows/'
     | '/_app/pipeline/'
+    | '/api/webhooks/flow/$flowId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  ApiWebhooksWhatsappRoute: typeof ApiWebhooksWhatsappRoute
+  ApiWebhooksFlowFlowIdRoute: typeof ApiWebhooksFlowFlowIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -218,6 +244,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppContactsIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/api/webhooks/whatsapp': {
+      id: '/api/webhooks/whatsapp'
+      path: '/api/webhooks/whatsapp'
+      fullPath: '/api/webhooks/whatsapp'
+      preLoaderRoute: typeof ApiWebhooksWhatsappRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/pipeline/$pipelineId': {
       id: '/_app/pipeline/$pipelineId'
       path: '/pipeline/$pipelineId'
@@ -238,6 +271,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/contacts/$contactId'
       preLoaderRoute: typeof AppContactsContactIdRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/api/webhooks/flow/$flowId': {
+      id: '/api/webhooks/flow/$flowId'
+      path: '/api/webhooks/flow/$flowId'
+      fullPath: '/api/webhooks/flow/$flowId'
+      preLoaderRoute: typeof ApiWebhooksFlowFlowIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
@@ -270,6 +310,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  ApiWebhooksWhatsappRoute: ApiWebhooksWhatsappRoute,
+  ApiWebhooksFlowFlowIdRoute: ApiWebhooksFlowFlowIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

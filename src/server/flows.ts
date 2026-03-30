@@ -355,7 +355,9 @@ export async function triggerFlowsForEvent(
   contact: ContactRow,
   workspaceId: string
 ): Promise<{ executed: number }> {
-  const supabase = createServerClient()
+  // Dynamic import keeps supabase.server out of the client bundle
+  const { createServerClient: makeClient } = await import('../lib/supabase.server')
+  const supabase = makeClient()
 
   const { data: flows } = await supabase
     .from('flows')
