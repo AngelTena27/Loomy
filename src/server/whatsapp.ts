@@ -25,40 +25,29 @@ export const connectWhatsAppFn = createServerFn({ method: 'POST' }).handler(asyn
   const provider = getWhatsAppProvider()
   const name = instanceName(workspaceId)
 
-  const [existing] = await db.select().from(whatsappInstances)
-    .where(eq(whatsappInstances.workspace_id, workspaceId)).limit(1)
+  // Always delete existing instance (in Evolution and DB) for a clean start
+  await provider.deleteInstance(name).catch(() => null)
+  await db.delete(whatsappInstances).where(eq(whatsappInstances.workspace_id, workspaceId))
 
-  if (existing?.status === 'connected') return { status: 'connected', qr: null }
+  // Create fresh instance
+  await provider.createInstance(name)
+  await db.insert(whatsappInstances).values({
+    workspace_id: workspaceId,
+    instance_name: name,
+    status: 'connecting',
+    provider: 'evolution',
+  })
 
-  // Create instance if it doesn't exist
-  if (!existing) {
-    await provider.createInstance(name)
-    await db.insert(whatsappInstances).values({
-      workspace_id: workspaceId,
-      instance_name: name,
-      status: 'connecting',
-      provider: 'evolution',
-    })
-  } else {
-    // Logout to force QR regeneration
-    await fetch(`${process.env.EVOLUTION_API_URL}/instance/logout/${name}`, {
-      method: 'DELETE',
-      headers: { apikey: process.env.EVOLUTION_API_KEY! },
-    }).catch(() => null)
-    await db.update(whatsappInstances)
-      .set({ status: 'connecting', qr_code: null, updated_at: new Date() })
-      .where(eq(whatsappInstances.workspace_id, workspaceId))
-  }
+  // Register webhook so Evolution pushes QR and connection events to us
+  const webhookUrl = `${getAppOrigin()}/api/webhooks/whatsapp`
+  await provider.setWebhook(name, webhookUrl).catch(() => null)
 
-  // Poll Evolution for QR (it appears within ~2s after create/logout)
+  // Try to get QR immediately (Evolution sometimes generates it within ~2s)
   let qrBase64: string | null = null
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 4; i++) {
     await new Promise(r => setTimeout(r, 1500))
-    const res = await fetch(`${process.env.EVOLUTION_API_URL}/instance/connect/${name}`, {
-      headers: { apikey: process.env.EVOLUTION_API_KEY! },
-    })
-    const data = await res.json() as { base64?: string; count?: number }
-    if (data.base64) { qrBase64 = data.base64; break }
+    const qr = await provider.getQR(name)
+    if (qr?.base64) { qrBase64 = qr.base64; break }
   }
 
   if (qrBase64) {
@@ -67,11 +56,7 @@ export const connectWhatsAppFn = createServerFn({ method: 'POST' }).handler(asyn
       .where(eq(whatsappInstances.workspace_id, workspaceId))
   }
 
-  // Register webhook so Evolution sends events (QR, connection, messages) to us
-  const webhookUrl = `${getAppOrigin()}/api/webhooks/whatsapp`
-  await provider.setWebhook(name, webhookUrl).catch(() => null)
-
-  return { status: 'connecting', qr: qrBase64 }
+  return { status: 'connecting' as const, qr: qrBase64 }
 })
 
 // ─── Status + QR (polled by frontend every 3s) ────────────
@@ -118,10 +103,9 @@ export const disconnectWhatsAppFn = createServerFn({ method: 'POST' }).handler(a
   const provider = getWhatsAppProvider()
   const name = instanceName(workspaceId)
 
+  // Delete from Evolution API and remove record from DB entirely
   await provider.deleteInstance(name).catch(() => null)
-  await db.update(whatsappInstances)
-    .set({ status: 'disconnected', phone_number: null, qr_code: null, updated_at: new Date() })
-    .where(eq(whatsappInstances.workspace_id, workspaceId))
+  await db.delete(whatsappInstances).where(eq(whatsappInstances.workspace_id, workspaceId))
 
   return { success: true }
 })
